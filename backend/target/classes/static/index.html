@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Expense Tracker</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <h1>💰 Expense Tracker</h1>
+      <p class="tagline">Know where your money goes, week by week</p>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab active" id="tab-add" data-view="add">➕ Add Expense</button>
+      <button class="tab" id="tab-summary" data-view="summary">📊 Weekly Summary</button>
+    </nav>
+
+    <!-- ============ ADD EXPENSE VIEW ============ -->
+    <section id="view-add" class="view active">
+      <form id="expense-form" class="card" novalidate>
+        <h2>New expense</h2>
+
+        <label class="field">
+          <span>Amount</span>
+          <div class="amount-wrap">
+            <span class="currency">₹</span>
+            <input type="number" id="amount" placeholder="0.00" min="0.01" step="0.01" inputmode="decimal" required />
+          </div>
+        </label>
+
+        <label class="field">
+          <span>Description</span>
+          <input type="text" id="description" placeholder="e.g. Lunch at cafe" maxlength="80" />
+        </label>
+
+        <label class="field">
+          <span>Category</span>
+          <select id="category" required>
+            <option value="" disabled selected>Select a category</option>
+            <option value="Food">🍔 Food</option>
+            <option value="Transport">🚕 Transport</option>
+            <option value="Shopping">🛍️ Shopping</option>
+            <option value="Bills">🧾 Bills</option>
+            <option value="Entertainment">🎬 Entertainment</option>
+            <option value="Other">📦 Other</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Date</span>
+          <input type="date" id="date" required />
+        </label>
+
+        <p class="error" id="form-error" hidden></p>
+
+        <button type="submit" class="btn primary">Add expense</button>
+      </form>
+
+      <div class="card">
+        <h2>This week's expenses</h2>
+        <div id="week-nav-mini" class="week-nav">
+          <button id="prev-week-mini" class="btn ghost" type="button">← Prev</button>
+          <span id="week-label-mini"></span>
+          <button id="next-week-mini" class="btn ghost" type="button">Next →</button>
+        </div>
+        <ul id="expense-list" class="expense-list"></ul>
+        <p class="empty" id="expense-empty">No expenses recorded this week yet.</p>
+      </div>
+    </section>
+
+    <!-- ============ SUMMARY VIEW ============ -->
+    <section id="view-summary" class="view">
+      <div class="card">
+        <div class="week-nav">
+          <button id="prev-week" class="btn ghost" type="button">← Prev week</button>
+          <span id="week-label"></span>
+          <button id="next-week" class="btn ghost" type="button">Next week →</button>
+        </div>
+
+        <div class="total-row">
+          <span>Total spent</span>
+          <strong id="total-spent">₹0.00</strong>
+        </div>
+
+        <h2>Where's it going?</h2>
+        <div id="breakdown"></div>
+        <p class="empty" id="breakdown-empty">Nothing spent this week. Add an expense to see the breakdown.</p>
+      </div>
+    </section>
+
+    <footer class="app-footer">
+      <small>Expenses are saved on this device (localStorage). Weeks run Monday → Sunday.</small>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
