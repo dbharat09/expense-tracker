@@ -1,4 +1,9 @@
-/* Expense Tracker — stores expenses in localStorage, weeks run Monday → Sunday. */
+/* Expense Tracker — API-aware frontend.
+ * On load it probes GET /api/health (same origin):
+ *   - reachable  -> backend mode: all CRUD via /api/expenses, summary via /api/summary
+ *   - unreachable -> localStorage mode: everything stays in the browser (original behavior)
+ * Weeks run Monday → Sunday in both modes.
+ */
 (function () {
   "use strict";
 
@@ -16,7 +21,12 @@
   // 0 = current week; positive = future weeks, negative = past weeks
   var weekOffset = 0;
 
-  /* ---------- storage ---------- */
+  // Backend-mode state
+  var backendMode = false;
+  var backendWeek = null;    // {expenses, weekStart, weekEnd, weekLabel}
+  var backendSummary = null; // {total, byCategory:[{category,total,count,pct}], topCategory, ...}
+
+  /* ---------- localStorage (fallback mode) ---------- */
   function loadExpenses() {
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
@@ -31,15 +41,56 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
   }
 
+  /* ---------- backend API client ---------- */
+  function api(path, options) {
+    return fetch(path, options).then(function (res) {
+      if (res.status === 204) return null;
+      if (!res.ok) {
+        return res.json().catch(function () { return {}; }).then(function (body) {
+          throw new Error(body.error || ("Request failed with status " + res.status));
+        });
+      }
+      return res.json();
+    });
+  }
+
+  function refreshBackend() {
+    return api("/api/expenses?weekOffset=" + weekOffset).then(function (week) {
+      backendWeek = week;
+      return api("/api/summary?weekOffset=" + weekOffset);
+    }).then(function (summary) {
+      backendSummary = summary;
+    });
+  }
+
+  /* ---------- storage operations (both modes, always return a Promise) ---------- */
   function addExpense(expense) {
+    if (backendMode) {
+      return api("/api/expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: expense.amount,
+          description: expense.description,
+          category: expense.category,
+          date: expense.date
+        })
+      }).then(refreshBackend);
+    }
     var list = loadExpenses();
     list.push(expense);
     saveExpenses(list);
+    return Promise.resolve();
   }
 
   function deleteExpense(id) {
+    if (backendMode) {
+      return api("/api/expenses/" + encodeURIComponent(id), { method: "DELETE" })
+        .then(refreshBackend);
+    }
     var list = loadExpenses().filter(function (e) { return e.id !== id; });
     saveExpenses(list);
+    return Promise.resolve();
   }
 
   /* ---------- week helpers (Monday → Sunday) ---------- */
@@ -68,6 +119,9 @@
   }
 
   function weekExpenses() {
+    if (backendMode && backendWeek) {
+      return backendWeek.expenses;
+    }
     return loadExpenses()
       .filter(function (e) { return inCurrentWeek(e.date); })
       .sort(function (a, b) { return b.date.localeCompare(a.date); });
@@ -84,6 +138,9 @@
   }
 
   function weekLabel() {
+    if (backendMode && backendWeek) {
+      return backendWeek.weekLabel;
+    }
     var r = weekRange();
     var opts = { day: "numeric", month: "short" };
     var label = r.start.toLocaleDateString("en-IN", opts) + " – " + r.end.toLocaleDateString("en-IN", opts);
@@ -126,8 +183,10 @@
       del.title = "Delete";
       del.setAttribute("aria-label", "Delete expense");
       del.addEventListener("click", function () {
-        deleteExpense(e.id);
-        renderAll();
+        deleteExpense(e.id).then(renderAll, function (err) {
+          showError("Could not delete: " + err.message);
+          renderAll();
+        });
       });
       right.appendChild(amt);
       right.appendChild(del);
@@ -142,27 +201,40 @@
   }
 
   function renderSummary() {
-    var list = weekExpenses();
-    var total = list.reduce(function (sum, e) { return sum + Number(e.amount); }, 0);
+    var rows, total, label;
+    if (backendMode && backendSummary) {
+      total = backendSummary.total;
+      label = backendSummary.weekLabel;
+      rows = backendSummary.byCategory.map(function (r) {
+        return { cat: r.category, total: r.total, pct: r.pct };
+      });
+    } else {
+      var list = weekExpenses();
+      total = list.reduce(function (sum, e) { return sum + Number(e.amount); }, 0);
+      label = weekLabel();
+      var byCat = {};
+      list.forEach(function (e) {
+        byCat[e.category] = (byCat[e.category] || 0) + Number(e.amount);
+      });
+      rows = Object.keys(byCat)
+        .map(function (cat) {
+          return {
+            cat: cat,
+            total: byCat[cat],
+            pct: total > 0 ? Math.round((byCat[cat] / total) * 100) : 0
+          };
+        })
+        .sort(function (a, b) { return b.total - a.total; });
+    }
+
     document.getElementById("total-spent").textContent = fmt(total);
-    document.getElementById("week-label").textContent = weekLabel();
-
-    var byCat = {};
-    list.forEach(function (e) {
-      byCat[e.category] = (byCat[e.category] || 0) + Number(e.amount);
-    });
-
-    var rows = Object.keys(byCat)
-      .map(function (cat) { return { cat: cat, total: byCat[cat] }; })
-      .sort(function (a, b) { return b.total - a.total; });
+    document.getElementById("week-label").textContent = label;
 
     var box = document.getElementById("breakdown");
     var empty = document.getElementById("breakdown-empty");
     box.innerHTML = "";
 
     rows.forEach(function (row, idx) {
-      var pct = total > 0 ? Math.round((row.total / total) * 100) : 0;
-
       var wrap = document.createElement("div");
       wrap.className = "cat-row";
 
@@ -179,7 +251,7 @@
       }
       var vals = document.createElement("span");
       vals.className = "cat-vals";
-      vals.textContent = fmt(row.total) + " · " + pct + "%";
+      vals.textContent = fmt(row.total) + " · " + row.pct + "%";
       head.appendChild(name);
       head.appendChild(vals);
 
@@ -187,7 +259,7 @@
       bar.className = "bar";
       var fill = document.createElement("div");
       fill.className = "bar-fill";
-      fill.style.width = pct + "%";
+      fill.style.width = row.pct + "%";
       bar.appendChild(fill);
 
       wrap.appendChild(head);
@@ -221,7 +293,14 @@
 
   function shiftWeek(delta) {
     weekOffset += delta;
-    renderAll();
+    if (backendMode) {
+      refreshBackend().then(renderAll, function (err) {
+        showError("Could not load week: " + err.message);
+        renderAll();
+      });
+    } else {
+      renderAll();
+    }
   }
   document.getElementById("prev-week").addEventListener("click", function () { shiftWeek(-1); });
   document.getElementById("next-week").addEventListener("click", function () { shiftWeek(1); });
@@ -254,12 +333,14 @@
       description: description,
       category: category,
       date: date
+    }).then(function () {
+      document.getElementById("expense-form").reset();
+      document.getElementById("date").value = todayISO();
+      renderAll();
+      switchView("summary");
+    }, function (err) {
+      showError("Could not save: " + err.message);
     });
-
-    document.getElementById("expense-form").reset();
-    document.getElementById("date").value = todayISO();
-    renderAll();
-    switchView("summary");
   });
 
   function showError(msg) {
@@ -275,7 +356,18 @@
     return d.getFullYear() + "-" + m + "-" + day;
   }
 
-  /* ---------- init ---------- */
+  /* ---------- init: detect backend, then render ---------- */
   document.getElementById("date").value = todayISO();
-  renderAll();
+
+  fetch("/api/health").then(function (res) {
+    if (!res.ok) throw new Error("no backend");
+    return res.json();
+  }).then(function () {
+    backendMode = true;
+    return refreshBackend();
+  }).catch(function () {
+    backendMode = false; // localStorage fallback (e.g. GitHub Pages demo)
+  }).then(function () {
+    renderAll();
+  });
 })();
