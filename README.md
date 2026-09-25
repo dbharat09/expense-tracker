@@ -38,4 +38,51 @@ python3 -m http.server 8080
 
 - Weeks run Monday → Sunday.
 - Form validation: amount must be greater than 0, a category must be selected, and a date is required.
-- All data stays on the device — nothing is sent to any server.
+- All data stays on the device — nothing is sent to any server (in v1 mode).
+
+---
+
+## v2: Full-stack (Spring Boot + Firestore)
+
+The `backend/` directory adds a real backend so expenses sync across devices:
+
+- **Stack:** Java 17, Spring Boot 3.2.x, Maven, Firebase Admin SDK 9.2.0, Firestore (free tier).
+- **Layout:**
+  - `backend/pom.xml` — Maven build (includes `spring-boot-maven-plugin`, so `mvn spring-boot:run` works).
+  - `backend/src/main/java/com/bharat/expensetracker/` — application code:
+    - `ExpenseTrackerApplication.java` — boot entry point
+    - `config/FirebaseConfig.java` — Firestore client; credentials from `FIREBASE_SERVICE_ACCOUNT` (full JSON) → `GOOGLE_APPLICATION_CREDENTIALS` (file path) → `FIRESTORE_EMULATOR_HOST` (local emulator); fails fast at startup if none is set
+    - `model/Expense.java` — `id, amount, description, category, date (yyyy-MM-dd), createdAt`
+    - `dto/CreateExpenseRequest.java` — POST body
+    - `service/ExpenseService.java` — Firestore queries (collection `expenses`, ordered by `date`), week math, summary aggregation
+    - `controller/ExpenseController.java` — REST API, CORS open to all origins
+    - `exception/` — `BadRequestException`, `ExpenseNotFoundException`, `GlobalExceptionHandler` (all errors as `{"error": "..."}`)
+  - `backend/src/main/resources/static/` — the same frontend (served at `/` when running the jar)
+  - `backend/src/main/resources/application.properties` — `server.port=${PORT:8080}`
+  - `backend/Dockerfile` — multi-stage build → `java -jar`, respects `$PORT`
+  - `backend/README.md` — env vars, Firestore setup, local run, Render deploy notes
+
+### API
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/health` | `{"status":"ok"}` — never touches Firestore |
+| POST | `/api/expenses` | `{amount, description, category, date}` → 201; 400 on bad input |
+| GET | `/api/expenses?weekOffset=0` | week's expenses + `weekStart` / `weekEnd` / `weekLabel` |
+| DELETE | `/api/expenses/{id}` | 204, or 404 |
+| GET | `/api/summary?weekOffset=0` | `{total, byCategory:[{category,total,count,pct}], topCategory, ...}` sorted desc |
+
+`weekOffset`: `0` = current week (Mon–Sun), `-1` = last week, `1` = next week.
+
+### How to run
+
+```bash
+cd backend
+export FIRESTORE_EMULATOR_HOST=localhost:8080   # or set real Firebase credentials
+mvn spring-boot:run
+# UI + API at http://localhost:8080  (try /api/health)
+```
+
+The frontend auto-detects the backend: if `GET /api/health` (same origin) succeeds it uses
+the API for everything; otherwise it falls back to the original `localStorage` behavior —
+so the GitHub Pages demo keeps working untouched.
